@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+"""pre-push guard: the private `gitea` remote (local backup) is always open and never scanned; any other
+remote (e.g. GitHub) needs an explicit publish approval and is gated by tools/privacy_scan.py.
+
+Approval: file `.publish-approved` in the repo root (gitignored) or env USAGE_LEDGER_PUBLISH_OK=1.
+Public remotes accept only the branch `release` as local source (never `main`, other branches, tags or
+deletions); the scan then covers the tree and full history of `release` only. Exit 0 allow, 1 block.
+"""
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+from typing import Mapping, Sequence
+
+REPO = Path(os.path.realpath(__file__)).parent.parent.parent
+sys.path.insert(0, str(REPO))
+
+from tools import privacy_scan  # noqa: E402
+
+PRIVATE_REMOTE = "gitea"
+PUBLIC_BRANCH = "release"
+PUBLIC_REF = f"refs/heads/{PUBLIC_BRANCH}"
+ZERO_SHA = "0" * 40
+PUBLIC_HOSTS = ("github.com", "gitlab.com", "bitbucket.org")
+# Private working files and data that must never reach a public remote, whatever make_release.sh did.
+PRIVATE_PATHS = re.compile(r"(^|/)(TASK[^/]*\.md|PROGRESS\.md|PHASES\.md|SUMMARY\.md|USER-NOTIFY\.md|CLAUDE\.md|"
+                           r"INST-TEST\.md|[^/]*LOOP[^/]*\.md|DELEGATIONS/.*|\.claude/.*|\.env|[^/]*\.(jsonl|log|gz|"
+                           r"sqlite[^/]*)|(archive|ledger|samples|reports|data)/.*)$")
+
+
+def is_private_remote(name: str, url: str) -> bool:
+    return name == PRIVATE_REMOTE and not any(h in url.lower() for h in PUBLIC_HOSTS)
+
+
+def approved(repo: Path, env: Mapping[str, str]) -> bool:
+    return env.get("USAGE_LEDGER_PUBLISH_OK") == "1" or (repo / ".publish-approved").exists()
+
+
+def private_files(repo: Path, ref: str) -> list[str]:
+    """Paths in any commit reachable from `ref` that match PRIVATE_PATHS."""
+    out = subprocess.run(["git", "-C", str(repo), "log", "--format=", "--name-only", ref],
+                         check=True, capture_output=True, text=True).stdout
+    return sorted({f for f in out.splitlines() if f and PRIVATE_PATHS.search(f)})
+
+
+def check(name: str, url: str, repo: Path, env: Mapping[str, str],
+          scan_args: Sequence[str] = (), refs: Sequence[tuple[str, str]] = ()) -> tuple[bool, str]:
+    """`refs` = (local ref, local sha) pairs as git passes them on stdin."""
+    if is_private_remote(name, url):
+        return True, ""  # private local backup (Ben's rule): never scanned, never blocked
+    if not approved(repo, env):
+        return False, (f"push to remote '{name}' blocked: not the private gitea remote and no publish "
+                       "approval (.publish-approved / USAGE_LEDGER_PUBLISH_OK=1). Ben releases this.")
+    bad = [r for r, sha in refs if r != PUBLIC_REF or sha == ZERO_SHA]
+    if bad:
+        return False, (f"push to public remote '{name}' blocked: only the branch '{PUBLIC_BRANCH}' may be "
+                       f"pushed there (offending: {', '.join(bad)}).")
+    try:
+        leaked = private_files(repo, PUBLIC_REF)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        return False, f"push blocked: cannot list files of '{PUBLIC_BRANCH}' ({exc})."
+    if leaked:
+        return False, (f"push blocked: '{PUBLIC_BRANCH}' contains private files: {', '.join(leaked[:10])}. "
+                       "Rebuild it with tools/make_release.sh.")
+    argv = ["--repo", str(repo), *scan_args, "--ref", PUBLIC_REF]
+    if privacy_scan.main(argv) != 0:
+        return False, "push blocked: privacy_scan reports findings (see above). Fix them first."
+    return True, ""
+
+
+def main(argv: Sequence[str]) -> int:
+    name, url = (list(argv) + ["", ""])[:2]
+    refs = [(p[0], p[1]) for p in (ln.split() for ln in sys.stdin.read().splitlines()) if len(p) >= 2]
+    ok, msg = check(name, url, REPO, os.environ, refs=refs)
+    if not ok:
+        print(f"pre-push: {msg}", file=sys.stderr)
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,12 @@
+# Allowlist for tools/privacy_scan.py
+# Format:  <path-glob> <rule> [=<literal>]  # reason (mandatory)
+# Rules: user-path email ipv4 project-name token long-blob artifact extra. No blanket suppression.
+tests/* email =t@t.invalid  # synthetic git author for temporary test repos (reserved .invalid TLD)
+tests/* email =git@github.com  # scp-style remote URL in synthetic hook tests, no real account
+tools/privacy_allow.txt email =t@t.invalid  # the allowlist names the literal it allows
+tools/privacy_allow.txt email =git@github.com  # the allowlist names the literal it allows
+DELEGATIONS/* project-name  # private working file, excluded from the release branch by tools/make_release.sh
+PROGRESS.md project-name  # private working file, excluded from the release branch by tools/make_release.sh
+SUMMARY.md project-name  # private working file, excluded from the release branch by tools/make_release.sh
+USER-NOTIFY.md project-name  # private working file, excluded from the release branch by tools/make_release.sh
+TASK*.md project-name  # private working file, excluded from the release branch by tools/make_release.sh

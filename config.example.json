@@ -1,0 +1,7 @@
+{
+  "data_dir": "~/path/to/usage-ledger-data",
+  "projects_dir": "~/.claude/projects",
+  "archive_target": "user@host:/path/to/archive/",
+  "archive_ssh_key": "~/.ssh/id_ed25519_usage_archive",
+  "roots": ["~/path/to/projects"]
+}

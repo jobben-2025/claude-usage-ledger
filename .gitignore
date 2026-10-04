@@ -1,0 +1,15 @@
+data/
+*.sqlite
+*.sqlite-*
+*.jsonl
+*.log
+.venv/
+__pycache__/
+.pytest_cache/
+.env
+archive/
+ledger/
+samples/
+reports/
+*.gz
+.publish-approved
